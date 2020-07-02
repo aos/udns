@@ -1,9 +1,11 @@
 package main
 
 import (
+	"bytes"
 	"flag"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"log"
 	"os"
 	"time"
@@ -11,7 +13,7 @@ import (
 	"github.com/miekg/dns"
 )
 
-func monitorZonefile(zonefile string) {
+func monitorZonefile(zp *dns.ZoneParser) {
 	fileInfo, err := os.Stat(zonefile)
 	if err != nil {
 		log.Fatalf("Could not stat file: %s", err)
@@ -58,14 +60,13 @@ func run(args []string, stdin io.Reader) error {
 		return fmt.Errorf("Must specify a zonefile")
 	}
 
-	f, err := os.Open(*zonefile)
+	data, err := ioutil.ReadFile(*zonefile)
 	if err != nil {
-		return err
+		return fmt.Errorf("Error reading file: %s", err)
 	}
-	defer f.Close()
 
-	zp := dns.NewZoneParser(f, "", *zonefile)
-	// go monitorZonefile()
+	zp := dns.NewZoneParser(bytes.NewReader(data), "", *zonefile)
+	//go monitorZonefile(zp)
 
 	return nil
 }
