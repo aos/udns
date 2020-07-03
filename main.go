@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -31,17 +32,10 @@ func monitorZonefile(zp *dns.ZoneParser) {
 			}
 
 			if fileInfo.ModTime() != checkFile.ModTime() {
-				log.Printf("zonefile has been modified %s", fileInfo.Name())
+				log.Printf("zone file has been modified %s", fileInfo.Name())
 				fileInfo = checkFile
 			}
 		}
-	}
-}
-
-func main() {
-	if err := run(os.Args, os.Stdin); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
 	}
 }
 
@@ -50,23 +44,54 @@ func run(args []string, stdin io.Reader) error {
 	var (
 		port     = flags.String("port", "53", "UDP port to listen on for DNS")
 		server   = flags.String("forward-server", "1.1.1.1:53", "forward DNS server")
-		zonefile = flags.String("zonefile", "", "zonefile location")
+		zonefile = flags.String("zone file", "default.zone", "zone file name")
 	)
 	if err := flags.Parse(args[1:]); err != nil {
 		return err
 	}
 
 	if *zonefile == "" {
-		return fmt.Errorf("Must specify a zonefile")
+		return errors.New("Must specify a zone file")
 	}
 
-	data, err := ioutil.ReadFile(*zonefile)
+	go monitorZonefile(*zonefile)
+
+	rrs, err := parseZonefile(*zonefile)
 	if err != nil {
-		return fmt.Errorf("Error reading file: %s", err)
+		return fmt.Errorf("Error parsing zone file: %s", err)
 	}
 
-	zp := dns.NewZoneParser(bytes.NewReader(data), "", *zonefile)
-	//go monitorZonefile(zp)
+	dns.HandleFunc(".", func(w dns.ResponseWriter, m *dns.Msg) {
+		// do something with dns requestion
+		// like serve back the matched record(s)
+	})
 
 	return nil
+}
+
+func parseZonefile(zonefile string) ([]dns.RR, error) {
+	data, err := ioutil.ReadFile(*zonefile)
+	if err != nil {
+		return fmt.Errorf("Error reading zone file: %s", err)
+	}
+
+	rrs := []dns.RR{}
+
+	zp := dns.NewZoneParser(bytes.NewReader(data), "", *zonefile)
+	if zp.Err() != nil {
+		return nil, zp.Err()
+	}
+
+	for rr, ok := zp.Next(); ok; rr, ok = zp.Next() {
+		rrs = append(rrs, rr)
+	}
+
+	return rrs, nil
+}
+
+func main() {
+	if err := run(os.Args, os.Stdin); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
 }
