@@ -9,10 +9,20 @@ import (
 	"io/ioutil"
 	"log"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/miekg/dns"
 )
+
+// Zone contains all the information necessary to serve DNS requests
+type Zone struct {
+	filename        string
+	fileLastModTime time.Time
+	rrs             []dns.RR
+	ns              []dns.NS
+	mut             sync.Mutex
+}
 
 func monitorZonefile(zp *dns.ZoneParser) {
 	fileInfo, err := os.Stat(zonefile)
@@ -39,6 +49,26 @@ func monitorZonefile(zp *dns.ZoneParser) {
 	}
 }
 
+func parseRecords(zone *Zone) error {
+	zone.mut.Lock()
+
+	data, err := ioutil.ReadFile(zone.filename)
+	if err != nil {
+		return fmt.Errorf("Error reading zone file: %s", err)
+	}
+
+	zp := dns.NewZoneParser(bytes.NewReader(data), "", zone.filename)
+	if zp.Err() != nil {
+		return zp.Err()
+	}
+
+	for rr, ok := zp.Next(); ok; rr, ok = zp.Next() {
+		zone.rrs = append(zone.rrs, rr)
+	}
+
+	zone.mut.Unlock()
+}
+
 func run(args []string, stdin io.Reader) error {
 	flags := flag.NewFlagSet(args[0], flag.ExitOnError)
 	var (
@@ -54,12 +84,24 @@ func run(args []string, stdin io.Reader) error {
 		return errors.New("Must specify a zone file")
 	}
 
-	go monitorZonefile(*zonefile)
+	fileInfo, err := os.Stat(zonefile)
+	if err != nil {
+		log.Fatalf("Could not stat file: %s", err)
+	}
 
-	rrs, err := parseZonefile(*zonefile)
+	zone := Zone{
+		filename:        *zonefile,
+		fileLastModTime: fileInfo.ModTime(),
+		rrs:             []dns.RR{},
+		ns:              []dns.NS{},
+	}
+
+	err := parseRecords(&zone)
 	if err != nil {
 		return fmt.Errorf("Error parsing zone file: %s", err)
 	}
+
+	go monitorZonefile(*zonefile)
 
 	dns.HandleFunc(".", func(w dns.ResponseWriter, m *dns.Msg) {
 		// do something with dns requestion
@@ -67,26 +109,6 @@ func run(args []string, stdin io.Reader) error {
 	})
 
 	return nil
-}
-
-func parseZonefile(zonefile string) ([]dns.RR, error) {
-	data, err := ioutil.ReadFile(*zonefile)
-	if err != nil {
-		return fmt.Errorf("Error reading zone file: %s", err)
-	}
-
-	rrs := []dns.RR{}
-
-	zp := dns.NewZoneParser(bytes.NewReader(data), "", *zonefile)
-	if zp.Err() != nil {
-		return nil, zp.Err()
-	}
-
-	for rr, ok := zp.Next(); ok; rr, ok = zp.Next() {
-		rrs = append(rrs, rr)
-	}
-
-	return rrs, nil
 }
 
 func main() {
