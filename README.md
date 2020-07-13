@@ -19,12 +19,13 @@ my Wireguard VPN.
 
 3. Query types (**QTYPE**):
     - A (AAAA): IPv4 address, and IPv6 address (respectively)
-    - CNAME: alias (canonical name)
+    - CNAME: (canonical name for an) alias
     - PTR: reverse A (from address to hostname)
     - NS: name server
     - MX: mail exchange
     - SOA: Start of Authority, contains administrative information about the zone
     - HINFO: identifies CPU and OS used by host
+    - TXT: text strings
 
 4. Query classes (**QCLASS**):
     - IN: stands for INternet, the most common and widely used
@@ -38,7 +39,7 @@ my Wireguard VPN.
 
 ### Resource Records
 
-In a zone file, the contents of a resource record has the following format:
+In a zone file, a resource record has the following format:
 
 ```
 catcoffeecode.club.     1799    IN      A       157.245.253.239
