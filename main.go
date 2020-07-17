@@ -8,6 +8,7 @@ import (
 	"io/ioutil"
 	"log"
 	"os"
+	"strconv"
 	"sync"
 	"time"
 
@@ -30,30 +31,27 @@ func monitorZonefile(zone *Zone) {
 	for {
 		select {
 		case <-t.C:
-			zone.mut.Lock()
-
 			fileInfo, err := os.Stat(zone.filename)
 			if err != nil {
 				log.Fatalf("Could not stat file: %s", err)
 			}
 
-			if fileInfo.ModTime() != zone.fileLastModtime {
+			if fileInfo.ModTime() != zone.fileLastModTime {
 				log.Printf("zone file has been modified on %s", fileInfo.ModTime())
 				zone.fileLastModTime = fileInfo.ModTime()
 
-				err = parseRecords(&zone)
+				err = parseRecords(zone)
 				if err != nil {
 					log.Fatalf("Error parsing zone file: %s", err)
 				}
 			}
-
-			zone.mut.Unlock()
 		}
 	}
 }
 
 func parseRecords(zone *Zone) error {
 	zone.mut.Lock()
+	defer zone.mut.Unlock()
 
 	data, err := ioutil.ReadFile(zone.filename)
 	if err != nil {
@@ -72,24 +70,23 @@ func parseRecords(zone *Zone) error {
 			zone.rrs = append(zone.rrs, rr)
 		}
 	}
-
-	zone.mut.Unlock()
+	return nil
 }
 
 func run(args []string, stdin io.Reader) error {
 	flags := flag.NewFlagSet(args[0], flag.ExitOnError)
 	var (
-		port     = flags.String("port", "53", "UDP port to listen on for DNS")
-		server   = flags.String("forward-server", "1.1.1.1:53", "forward DNS server")
-		zonefile = flags.String("zone file", "master.zone", "zone file name")
+		port = flags.Int("port", 53, "UDP port to listen on for DNS")
+		//server   = flags.String("forward-server", "1.1.1.1:53", "forward DNS server")
+		zonefile = flags.String("zonefile", "master.zone", "zone file name")
 	)
 	if err := flags.Parse(args[1:]); err != nil {
 		return err
 	}
 
-	fileInfo, err := os.Stat(zonefile)
+	fileInfo, err := os.Stat(*zonefile)
 	if err != nil {
-		log.Errorf("Could not stat zone file: %s", err)
+		return fmt.Errorf("Could not stat zone file: %s", err)
 	}
 
 	zone := Zone{
@@ -99,17 +96,31 @@ func run(args []string, stdin io.Reader) error {
 		ns:              []dns.NS{},
 	}
 
-	err := parseRecords(&zone)
+	err = parseRecords(&zone)
 	if err != nil {
-		return log.Errorf("Error parsing zone file: %s", err)
+		return fmt.Errorf("Error parsing zone file: %s", err)
 	}
 
 	go monitorZonefile(&zone)
 
-	dns.HandleFunc(".", func(w dns.ResponseWriter, m *dns.Msg) {
+	dns.HandleFunc(".", func(w dns.ResponseWriter, r *dns.Msg) {
 		// do something with dns requests
 		// like serve back the matched record(s)
+		zone.mut.Lock()
+
+		m := new(dns.Msg)
+		m.SetReply(r)
+		m.Authoritative = true
+		m.Answer = zone.rrs
+		w.WriteMsg(m)
+
+		zone.mut.Unlock()
 	})
+
+	srv := &dns.Server{Addr: ":" + strconv.Itoa(*port), Net: "udp"}
+	if err := srv.ListenAndServe(); err != nil {
+		return err
+	}
 
 	return nil
 }
