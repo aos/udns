@@ -15,7 +15,7 @@ import (
 	"github.com/miekg/dns"
 )
 
-// Zone contains all the information necessary to serve DNS requests
+// Zone contains all the zone resource records parsed from file
 type Zone struct {
 	filename        string
 	fileLastModTime time.Time
@@ -63,6 +63,10 @@ func parseRecords(zone *Zone) error {
 		return zp.Err()
 	}
 
+	// Reset resource records and parse again with new data
+	zone.rrs = zone.rrs[:0]
+	zone.ns = zone.ns[:0]
+
 	for rr, ok := zp.Next(); ok; rr, ok = zp.Next() {
 		if rr.Header().Rrtype == dns.TypeNS {
 			zone.ns = append(zone.ns)
@@ -76,7 +80,7 @@ func parseRecords(zone *Zone) error {
 func run(args []string, stdin io.Reader) error {
 	flags := flag.NewFlagSet(args[0], flag.ExitOnError)
 	var (
-		port = flags.Int("port", 53, "UDP port to listen on for DNS")
+		port = flags.Int("port", 8053, "UDP port to listen on for DNS")
 		//server   = flags.String("forward-server", "1.1.1.1:53", "forward DNS server")
 		zonefile = flags.String("zonefile", "master.zone", "zone file name")
 	)
@@ -103,13 +107,13 @@ func run(args []string, stdin io.Reader) error {
 
 	go monitorZonefile(&zone)
 
-	dns.HandleFunc(".", func(w dns.ResponseWriter, r *dns.Msg) {
+	dns.HandleFunc(".", func(w dns.ResponseWriter, req *dns.Msg) {
 		// do something with dns requests
 		// like serve back the matched record(s)
 		zone.mut.Lock()
 
 		m := new(dns.Msg)
-		m.SetReply(r)
+		m.SetReply(req)
 		m.Authoritative = true
 		m.Answer = zone.rrs
 		w.WriteMsg(m)
