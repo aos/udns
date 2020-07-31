@@ -8,7 +8,6 @@ import (
 	"io/ioutil"
 	"log"
 	"os"
-	"strconv"
 	"sync"
 	"time"
 
@@ -80,7 +79,7 @@ func parseRecords(zone *Zone) error {
 func run(args []string, stdin io.Reader) error {
 	flags := flag.NewFlagSet(args[0], flag.ExitOnError)
 	var (
-		port = flags.Int("port", 8053, "UDP port to listen on for DNS")
+		port = flags.String("port", "8053", "UDP port to listen on for DNS")
 		//server   = flags.String("forward-server", "1.1.1.1:53", "forward DNS server")
 		zonefile = flags.String("zonefile", "master.zone", "zone file name")
 	)
@@ -115,18 +114,42 @@ func run(args []string, stdin io.Reader) error {
 		m := new(dns.Msg)
 		m.SetReply(req)
 		m.Authoritative = true
-		m.Answer = zone.rrs
+
+		for _, q := range req.Question {
+			answers := []dns.RR{}
+
+			for _, rr := range zone.rrs {
+				rh := rr.Header()
+
+				// 1. handle CNAMEs
+				// should call resolver function here (with localhost)
+
+				// 2. handle everything else
+				if q.Name == rh.Name && q.Qtype == rh.Rrtype && q.Qclass == rh.Class {
+					answers = append(answers, rr)
+				}
+			}
+
+			// if we can't find the answer, then recursively
+			// resolve with forward DNS server
+
+			m.Answer = append(m.Answer, answers...)
+		}
 		w.WriteMsg(m)
 
 		zone.mut.Unlock()
 	})
 
-	srv := &dns.Server{Addr: ":" + strconv.Itoa(*port), Net: "udp"}
+	srv := &dns.Server{Addr: ":" + *port, Net: "udp"}
 	if err := srv.ListenAndServe(); err != nil {
 		return err
 	}
 
 	return nil
+}
+
+func resolver(server, fqdn string, rrType uint16) []dns.RR {
+	return []dns.RR{}
 }
 
 func main() {
