@@ -20,7 +20,7 @@ type Zone struct {
 	fileLastModTime time.Time
 	rrs             []dns.RR
 	ns              []dns.RR
-	mut             sync.Mutex
+	mut             sync.RWMutex
 }
 
 func monitorZonefile(zone *Zone) {
@@ -79,11 +79,9 @@ func parseRecords(zone *Zone) error {
 func resolver(server, fqdn string, rrType uint16) []dns.RR {
 	m := new(dns.Msg)
 	m.Id = dns.Id()
-	m.RecursionDesired = true
 	m.SetQuestion(fqdn, rrType)
 
 	in, err := dns.Exchange(m, server)
-	fmt.Println("Error:", err)
 	if err == nil {
 		return in.Answer
 	}
@@ -122,9 +120,8 @@ func run(args []string, stdin io.Reader) error {
 	go monitorZonefile(&zone)
 
 	dns.HandleFunc(".", func(w dns.ResponseWriter, req *dns.Msg) {
-		// do something with dns requests
-		// like serve back the matched record(s)
-		zone.mut.Lock()
+		zone.mut.RLock()
+		defer zone.mut.RUnlock()
 
 		m := new(dns.Msg)
 		m.SetReply(req)
@@ -138,13 +135,11 @@ func run(args []string, stdin io.Reader) error {
 
 				// 1. handle CNAMEs
 				// should call resolver function here (with localhost)
-				if q.Name == rh.Name {
-					if rh.Rrtype == dns.TypeCNAME || q.Qtype == dns.TypeCNAME {
-						answers = append(answers, rr)
+				if q.Name == rh.Name && (rh.Rrtype == dns.TypeCNAME || q.Qtype == dns.TypeCNAME) {
+					answers = append(answers, rr)
 
-						for _, a := range resolver("127.0.0.1:"+*port, rr.(*dns.CNAME).Target, q.Qtype) {
-							answers = append(answers, a)
-						}
+					for _, a := range resolver("127.0.0.1:"+*port, rr.(*dns.CNAME).Target, q.Qtype) {
+						answers = append(answers, a)
 					}
 				}
 
@@ -160,26 +155,19 @@ func run(args []string, stdin io.Reader) error {
 				for _, a := range resolver(*server, q.Name, q.Qtype) {
 					answers = append(answers, a)
 				}
-			} else {
-				m.Ns = zone.ns
 			}
 
 			m.Answer = append(m.Answer, answers...)
 		}
 		w.WriteMsg(m)
-
-		zone.mut.Unlock()
 	})
 
-	errChan := make(chan error)
-	go func(e chan error) {
-		srv := &dns.Server{Addr: ":" + *port, Net: "udp"}
-		if err := srv.ListenAndServe(); err != nil {
-			e <- err
-		}
-	}(errChan)
+	srv := &dns.Server{Addr: ":" + *port, Net: "udp"}
+	if err := srv.ListenAndServe(); err != nil {
+		return err
+	}
 
-	return <-errChan
+	return nil
 }
 
 func main() {
