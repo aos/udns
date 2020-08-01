@@ -19,7 +19,7 @@ type Zone struct {
 	filename        string
 	fileLastModTime time.Time
 	rrs             []dns.RR
-	ns              []dns.NS
+	ns              []dns.RR
 	mut             sync.Mutex
 }
 
@@ -67,20 +67,35 @@ func parseRecords(zone *Zone) error {
 	zone.ns = zone.ns[:0]
 
 	for rr, ok := zp.Next(); ok; rr, ok = zp.Next() {
+		zone.rrs = append(zone.rrs, rr)
+
 		if rr.Header().Rrtype == dns.TypeNS {
-			zone.ns = append(zone.ns)
-		} else {
-			zone.rrs = append(zone.rrs, rr)
+			zone.ns = append(zone.ns, rr)
 		}
 	}
 	return nil
 }
 
+func resolver(server, fqdn string, rrType uint16) []dns.RR {
+	m := new(dns.Msg)
+	m.Id = dns.Id()
+	m.RecursionDesired = true
+	m.SetQuestion(fqdn, rrType)
+
+	in, err := dns.Exchange(m, server)
+	fmt.Println("Error:", err)
+	if err == nil {
+		return in.Answer
+	}
+
+	return []dns.RR{}
+}
+
 func run(args []string, stdin io.Reader) error {
 	flags := flag.NewFlagSet(args[0], flag.ExitOnError)
 	var (
-		port = flags.String("port", "8053", "UDP port to listen on for DNS")
-		//server   = flags.String("forward-server", "1.1.1.1:53", "forward DNS server")
+		port     = flags.String("port", "8053", "UDP port to listen on for DNS")
+		server   = flags.String("forward-server", "1.1.1.1:53", "forward DNS server")
 		zonefile = flags.String("zonefile", "master.zone", "zone file name")
 	)
 	if err := flags.Parse(args[1:]); err != nil {
@@ -96,7 +111,7 @@ func run(args []string, stdin io.Reader) error {
 		filename:        *zonefile,
 		fileLastModTime: fileInfo.ModTime(),
 		rrs:             []dns.RR{},
-		ns:              []dns.NS{},
+		ns:              []dns.RR{},
 	}
 
 	err = parseRecords(&zone)
@@ -123,6 +138,15 @@ func run(args []string, stdin io.Reader) error {
 
 				// 1. handle CNAMEs
 				// should call resolver function here (with localhost)
+				if q.Name == rh.Name {
+					if rh.Rrtype == dns.TypeCNAME || q.Qtype == dns.TypeCNAME {
+						answers = append(answers, rr)
+
+						for _, a := range resolver("127.0.0.1:"+*port, rr.(*dns.CNAME).Target, q.Qtype) {
+							answers = append(answers, a)
+						}
+					}
+				}
 
 				// 2. handle everything else
 				if q.Name == rh.Name && q.Qtype == rh.Rrtype && q.Qclass == rh.Class {
@@ -132,6 +156,13 @@ func run(args []string, stdin io.Reader) error {
 
 			// if we can't find the answer, then recursively
 			// resolve with forward DNS server
+			if len(answers) == 0 && *server != "" {
+				for _, a := range resolver(*server, q.Name, q.Qtype) {
+					answers = append(answers, a)
+				}
+			} else {
+				m.Ns = zone.ns
+			}
 
 			m.Answer = append(m.Answer, answers...)
 		}
@@ -140,16 +171,15 @@ func run(args []string, stdin io.Reader) error {
 		zone.mut.Unlock()
 	})
 
-	srv := &dns.Server{Addr: ":" + *port, Net: "udp"}
-	if err := srv.ListenAndServe(); err != nil {
-		return err
-	}
+	errChan := make(chan error)
+	go func(e chan error) {
+		srv := &dns.Server{Addr: ":" + *port, Net: "udp"}
+		if err := srv.ListenAndServe(); err != nil {
+			e <- err
+		}
+	}(errChan)
 
-	return nil
-}
-
-func resolver(server, fqdn string, rrType uint16) []dns.RR {
-	return []dns.RR{}
+	return <-errChan
 }
 
 func main() {
