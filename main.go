@@ -92,6 +92,7 @@ func resolver(server, fqdn string, rrType uint16) []dns.RR {
 func run(args []string, stdin io.Reader) error {
 	flags := flag.NewFlagSet(args[0], flag.ExitOnError)
 	var (
+		address  = flags.String("address", "", "address to listen on")
 		port     = flags.String("port", "8053", "UDP port to listen on for DNS")
 		server   = flags.String("forward-server", "1.1.1.1:53", "forward DNS server")
 		zonefile = flags.String("zonefile", "master.zone", "zone file name")
@@ -103,6 +104,11 @@ func run(args []string, stdin io.Reader) error {
 	fileInfo, err := os.Stat(*zonefile)
 	if err != nil {
 		return fmt.Errorf("Could not stat zone file: %s", err)
+	}
+
+	// Set local resolver address if not specified
+	if *address == "" {
+		*address = "127.0.0.1"
 	}
 
 	zone := Zone{
@@ -138,7 +144,7 @@ func run(args []string, stdin io.Reader) error {
 				if q.Name == rh.Name && (rh.Rrtype == dns.TypeCNAME || q.Qtype == dns.TypeCNAME) {
 					answers = append(answers, rr)
 
-					for _, a := range resolver("127.0.0.1:"+*port, rr.(*dns.CNAME).Target, q.Qtype) {
+					for _, a := range resolver(*address+":"+*port, rr.(*dns.CNAME).Target, q.Qtype) {
 						answers = append(answers, a)
 					}
 				}
@@ -162,7 +168,7 @@ func run(args []string, stdin io.Reader) error {
 		w.WriteMsg(m)
 	})
 
-	srv := &dns.Server{Addr: ":" + *port, Net: "udp"}
+	srv := &dns.Server{Addr: *address + ":" + *port, Net: "udp"}
 	if err := srv.ListenAndServe(); err != nil {
 		return err
 	}
