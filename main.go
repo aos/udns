@@ -76,17 +76,19 @@ func parseRecords(zone *Zone) error {
 	return nil
 }
 
-func resolver(server, fqdn string, rrType uint16) []dns.RR {
+func resolve(server, fqdn string, rrType uint16) []dns.RR {
 	m := new(dns.Msg)
 	m.Id = dns.Id()
 	m.SetQuestion(fqdn, rrType)
+	m.RecursionDesired = true
 
 	in, err := dns.Exchange(m, server)
-	if err == nil {
-		return in.Answer
+	if err != nil {
+		log.Printf("ERROR: unable to resolve %s\n", err)
+		return []dns.RR{}
 	}
 
-	return []dns.RR{}
+	return in.Answer
 }
 
 func run(args []string, stdin io.Reader) error {
@@ -132,6 +134,7 @@ func run(args []string, stdin io.Reader) error {
 		m := new(dns.Msg)
 		m.SetReply(req)
 		m.Authoritative = true
+		m.RecursionAvailable = true
 
 		for _, q := range req.Question {
 			answers := []dns.RR{}
@@ -140,11 +143,11 @@ func run(args []string, stdin io.Reader) error {
 				rh := rr.Header()
 
 				// 1. handle CNAMEs
-				// should call resolver function here (with localhost)
+				// should call resolve function here (with localhost)
 				if q.Name == rh.Name && (rh.Rrtype == dns.TypeCNAME || q.Qtype == dns.TypeCNAME) {
 					answers = append(answers, rr)
 
-					for _, a := range resolver(*address+":"+*port, rr.(*dns.CNAME).Target, q.Qtype) {
+					for _, a := range resolve(*address+":"+*port, rr.(*dns.CNAME).Target, q.Qtype) {
 						answers = append(answers, a)
 					}
 				}
@@ -158,9 +161,12 @@ func run(args []string, stdin io.Reader) error {
 			// if we can't find the answer, then recursively
 			// resolve with forward DNS server
 			if len(answers) == 0 && *server != "" {
-				for _, a := range resolver(*server, q.Name, q.Qtype) {
+				for _, a := range resolve(*server, q.Name, q.Qtype) {
 					answers = append(answers, a)
 				}
+			} else {
+				// Set local name server as authority
+				m.Ns = zone.ns
 			}
 
 			m.Answer = append(m.Answer, answers...)
