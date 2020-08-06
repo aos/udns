@@ -1,0 +1,13 @@
+[Unit]
+Description=Simple DNS server for wireguard
+Requires=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/aos/code/udns/
+User=root
+Group=root
+ExecStart=/home/aos/code/udns/udns -address 10.16.0.1 -port 53 -zonefile hello.zone
+
+[Install]
+WantedBy=multi-user.target
