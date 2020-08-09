@@ -8,7 +8,8 @@ WorkingDirectory=/home/aos/code/udns/
 User=root
 Group=root
 Restart=always
-ExecStart=/home/aos/code/udns/udns -address 10.16.0.1 -port 53 -zonefile hello.zone
+RestartSec=10
+ExecStart=/home/aos/code/udns/udns -address 10.16.0.1 -port 53 -zonefile master.zone
 
 [Install]
 WantedBy=multi-user.target

@@ -35,9 +35,9 @@ func monitorZonefile(zone *Zone) {
 				log.Fatalf("Could not stat file: %s", err)
 			}
 
-			if fileInfo.ModTime().After(zone.fileLastModTime) {
-				log.Printf("zone file has been modified on %s", fileInfo.ModTime())
-				zone.fileLastModTime = fileInfo.ModTime()
+			if mod := fileInfo.ModTime(); mod.After(zone.fileLastModTime) {
+				log.Printf("zone file has been modified on %s", mod)
+				zone.fileLastModTime = mod
 
 				err = parseRecords(zone)
 				if err != nil {
