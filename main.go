@@ -35,7 +35,7 @@ func monitorZonefile(zone *Zone) {
 				log.Fatalf("Could not stat file: %s", err)
 			}
 
-			if fileInfo.ModTime() != zone.fileLastModTime {
+			if fileInfo.ModTime().After(zone.fileLastModTime) {
 				log.Printf("zone file has been modified on %s", fileInfo.ModTime())
 				zone.fileLastModTime = fileInfo.ModTime()
 
@@ -143,7 +143,6 @@ func run(args []string, stdin io.Reader) error {
 				rh := rr.Header()
 
 				// 1. handle CNAMEs
-				// should call resolve function here (with localhost)
 				if q.Name == rh.Name && (rh.Rrtype == dns.TypeCNAME || q.Qtype == dns.TypeCNAME) {
 					answers = append(answers, rr)
 
