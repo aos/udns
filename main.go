@@ -137,13 +137,15 @@ func run(args []string, stdin io.Reader) error {
 		m.RecursionAvailable = true
 
 		for _, q := range req.Question {
+			log.Println("Received request:", q)
 			answers := []dns.RR{}
 
 			for _, rr := range zone.rrs {
 				rh := rr.Header()
+				isSubdomain := dns.IsSubDomain(rh.Name, q.Name)
 
-				// 1. handle CNAMEs
-				if q.Name == rh.Name && (rh.Rrtype == dns.TypeCNAME || q.Qtype == dns.TypeCNAME) {
+				// 1. handle CNAMEs (and subdomain CNAMEs)
+				if (q.Name == rh.Name || isSubdomain) && rh.Rrtype == dns.TypeCNAME {
 					answers = append(answers, rr)
 
 					for _, a := range resolve(*address+":"+*port, rr.(*dns.CNAME).Target, q.Qtype) {
@@ -152,7 +154,7 @@ func run(args []string, stdin io.Reader) error {
 				}
 
 				// 2. handle everything else
-				if q.Name == rh.Name && q.Qtype == rh.Rrtype && q.Qclass == rh.Class {
+				if (q.Name == rh.Name || isSubdomain) && q.Qtype == rh.Rrtype && q.Qclass == rh.Class {
 					answers = append(answers, rr)
 				}
 			}
